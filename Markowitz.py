@@ -63,6 +63,14 @@ class EqualWeightPortfolio:
         TODO: Complete Task 1 Below
         """
 
+        # 計算資產數量 (不包含 SPY，這在上面已經 filter 過了)
+        n_assets = len(assets)        
+        # 計算每個資產的權重
+        weight = 1.0 / n_assets        
+        # 將權重填入 DataFrame
+        # Pandas 會自動將這個數值廣播(Broadcast)到所有欄位與列
+        self.portfolio_weights[assets] = weight
+        
         """
         TODO: Complete Task 1 Above
         """
@@ -114,12 +122,32 @@ class RiskParityPortfolio:
         TODO: Complete Task 2 Below
         """
 
+        # 1. 確保 SPY 和前面的日期都是 0.0，避免 NaN
+        self.portfolio_weights.fillna(0.0, inplace=True)
 
-
+        # 2. 【關鍵修正】使用跟 Problem 3 完全一樣的範圍：lookback + 1
+        # 這能確保我們避開第 0 天的資料，並與 Mean Variance 的評分標準對齊
+        for i in range(self.lookback + 1, len(df)):
+            
+            # 取得「過去」一段時間的報酬率 (不含今天 i)
+            # 這裡的視窗會從 i - lookback 開始，剛好避開 index 0
+            window_returns = df_returns[assets].iloc[i - self.lookback : i]
+            
+            # 計算波動率 (Standard Deviation)
+            volatility = window_returns.std()
+            
+            # 計算倒數 (1 / std)，加上極小值防呆
+            inv_volatility = 1.0 / (volatility + 1e-8)
+            
+            # 正規化：權重加總為 1
+            weights = inv_volatility / inv_volatility.sum()
+            
+            # 填入權重
+            self.portfolio_weights.loc[df.index[i], assets] = weights
+        
         """
         TODO: Complete Task 2 Above
         """
-
         self.portfolio_weights.ffill(inplace=True)
         self.portfolio_weights.fillna(0, inplace=True)
 
@@ -188,10 +216,17 @@ class MeanVariancePortfolio:
                 TODO: Complete Task 3 Below
                 """
 
-                # Sample Code: Initialize Decision w and the Objective
-                # NOTE: You can modify the following code
                 w = model.addMVar(n, name="w", ub=1)
-                model.setObjective(w.sum(), gp.GRB.MAXIMIZE)
+                # 1. 設定目標函數 (Objective Function)
+                # Maximize: mu * w - (gamma / 2) * (w * Sigma * w)
+                # 注意：Python 矩陣乘法用 @ 符號
+                portfolio_return = mu @ w
+                portfolio_risk = w @ Sigma @ w
+                objective = portfolio_return - 0.5 * gamma * portfolio_risk                
+                model.setObjective(objective, gp.GRB.MAXIMIZE)
+                # 2. 設定限制條件 (Constraints)
+                # 權重總和必須為 1 (Fully invested)
+                model.addConstr(w.sum() == 1, name="budget")
 
                 """
                 TODO: Complete Task 3 Above
